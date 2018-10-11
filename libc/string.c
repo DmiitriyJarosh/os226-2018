@@ -18,6 +18,14 @@ size_t strlen(const char *s) {
 	return p - s;
 }
 
+char *strcpy(char *dest, const char *src) {
+	char *p = dest;
+	while (*src) {
+		*dest++ = *src++;
+	}
+	return p;
+}
+
 char *strchr(const char *s, int c) {
 	for (const char *p = s; *p != '\0'; ++p) {
 		if (*p == c) {
@@ -88,5 +96,10 @@ int memcmp(const void *s1, const void *s2, size_t n) {
 			return ss1[i] - ss2[i];
 		}
 	}
+	return 0;
+}
+
+long int strtol(const char *nptr, char **endptr, int base) {
+	// IMPL ME
 	return 0;
 }

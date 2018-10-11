@@ -11,29 +11,20 @@
 
 STATIC_ASSERT(sizeof(ucontext_t) <= HOST_UCTX_SZ);
 
-extern void tramptramp(void);
-
-static ucontext_t *h2uctx(struct context *hctx) {
-	return (ucontext_t *) &hctx->host_uctx;
+static void proctramp(void *_entry) {
+	void (*entry)() = _entry;
+	entry();
 }
 
-void ctx_push(struct context *ctx, unsigned long val) {
-	greg_t *regs = h2uctx(ctx)->uc_mcontext.gregs;
-	regs[REG_RSP] -= sizeof(unsigned long);
-	*(unsigned long *) regs[REG_RSP] = val;
+void ctx_make(struct uctx *_ctx, void *entry, void *stack, int stacksz) {
+	ucontext_t *ctx = (ucontext_t *) _ctx;
+	memset(ctx, 0, sizeof(*ctx));
+	getcontext(ctx);
+	ctx->uc_stack.ss_sp = stack + stacksz - 16;
+	ctx->uc_stack.ss_size = 0;
+	makecontext((ucontext_t *)ctx, (void *) proctramp, 1, entry);
 }
 
-void ctx_call_setup(struct context *ctx, void(*tramp)(unsigned long *), struct context_call_save *save) {
-	greg_t *regs = h2uctx(ctx)->uc_mcontext.gregs;
-
-	ctx_push(ctx, regs[REG_RIP]);
-	regs[REG_RIP] = (greg_t) tramptramp;
-
-	save->spbeforearg = (unsigned long) regs[REG_RSP];
-	save->calltraget = (unsigned long) tramp;
-}
-
-void ctx_call_end(struct context *ctx, struct context_call_save *save) {
-	ctx_push(ctx, save->spbeforearg);
-	ctx_push(ctx, save->calltraget);
+void ctx_switch(struct uctx *old, struct uctx *new) {
+	swapcontext((ucontext_t *) old, (ucontext_t *) new);
 }

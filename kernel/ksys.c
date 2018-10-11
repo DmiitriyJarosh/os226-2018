@@ -1,15 +1,18 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "string.h"
 
 #include "init.h"
+#include "pool.h"
 #include "kernel/util.h"
 #include "hal/context.h"
 #include "hal_context.h"
 #include "hal/dbg.h"
 
 #include "ksys.h"
+#include "proc.h"
 
 struct cpio_old_hdr {
 	unsigned short   c_magic;
@@ -65,6 +68,47 @@ typedef struct {
 	Elf64_Xword p_align;
 } Elf64_Phdr;
 
+static struct proc procspace[8];
+static struct pool procpool = POOL_INITIALIZER_ARRAY(procpool, procspace);
+
+static struct proc *curp;
+static TAILQ_HEAD(schedqueue, proc) squeue = TAILQ_HEAD_INITIALIZER(squeue);
+
+static char *execbufp;
+static void allocinit() {
+	if (!execbufp) {
+		execbufp = kernel_globals.mem;
+	}
+}
+
+static void *alloc(int size) {
+	const size_t execbufsz = kernel_globals.memsz;
+	char *const execbuf = kernel_globals.mem;
+
+	allocinit();
+
+	if (execbuf + execbufsz - execbufp < size) {
+		return NULL;
+	}
+
+	char *curexecbuf = execbufp;
+	execbufp += size;
+	return curexecbuf;
+}
+
+static void freeup(void *mark) {
+	// FIXME
+#if 0
+	allocinit();
+	execbufp = mark;
+#endif
+}
+
+static void *freemark(void) {
+	allocinit();
+	return execbufp;
+}
+
 static const char *cpio_name(const struct cpio_old_hdr *ch) {
 	return (const char*)ch + sizeof(struct cpio_old_hdr);
 }
@@ -107,71 +151,247 @@ static const struct cpio_old_hdr *find_exe(char *name) {
 	return found;
 }
 
-void *load(char *name, void **entry) {
+int load(char *name, void **entry, struct proc *proc) {
 	const struct cpio_old_hdr *ch = find_exe(name);
 	if (!ch) {
-		return NULL;
+		return -1;
 	}
-
-	// http://www.sco.com/developers/gabi/latest/contents.html
 	const char *rawelf = cpio_content(ch);
 
-	// IMPL ME
-	rawelf = rawelf;
-	return NULL;
-}
-
-void unload(void *mark) {
-	// IMPL ME
-}
-
-static void tramprun(unsigned long *args) {
-	int *code = (int *) args[0];
-	char **argv = (char **) args[1];
-	int (*entry)(int, char **) = (void *) args[2];
-	void *mark = (void *) args[3];
-
-	char **ap = argv + 1;
-	while (*ap != NULL) {
-		++ap;
+	const char elfhdrpat[] = { 0x7f, 'E', 'L', 'F', 2 };
+	if (memcmp(rawelf, elfhdrpat, sizeof(elfhdrpat))) {
+		return -1;
 	}
 
-	int r = entry(ap - argv, argv);
-	if (code) {
-		*code = r;
+	const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *) rawelf;
+	if (!ehdr->e_phoff ||
+			!ehdr->e_phnum ||
+			!ehdr->e_entry ||
+			ehdr->e_phentsize != sizeof(Elf64_Phdr)) {
+		return -1;
+	}
+	const Elf64_Phdr *phdrs = (const Elf64_Phdr *) (rawelf + ehdr->e_phoff);
+
+	const Elf64_Phdr *loadhdr = NULL;
+	for (int i = 0; i < ehdr->e_phnum; ++i) {
+		if (phdrs[i].p_type == PT_LOAD) {
+			loadhdr = phdrs + i;
+			break;
+		}
+	}
+	if (!loadhdr) {
+		return -1;
 	}
 
-	unload(mark);
+	if (ehdr->e_entry < loadhdr->p_vaddr ||
+			loadhdr->p_vaddr + loadhdr->p_memsz <= ehdr->e_entry) {
+		return -1;
+	}
+
+	const int loadsz = align(loadhdr->p_memsz, 0xfff);
+	char *loadp = alloc(loadsz);
+	memset(loadp, 0, loadhdr->p_memsz);
+	memcpy(loadp, rawelf + loadhdr->p_offset, loadhdr->p_filesz);
+
+	*entry = loadp + ehdr->e_entry - loadhdr->p_vaddr;
+	proc->load = loadp;
+	proc->loadsz = loadsz;
+	return 0;
 }
 
-int sys_run(struct context *ctx, char *argv[], int *code) {
+struct proc *current_process() {
+	return curp;
+}
+
+static int argv_size(char **argv, int *nargv) {
+	int s = 0;
+	char **a = argv;
+	while (*a) {
+		s += strlen(*a) + 1;
+		++a;
+	}
+	*nargv = (a - argv) + 1;
+	return s + *nargv * sizeof(char*);
+}
+
+static char **argv_copy(char *buf, size_t bufsz, char *argv[], int nargv) {
+	char **ra = (char**) buf;
+	char *p = buf + nargv * sizeof(char*);
+	char **a = argv;
+	while (*a) {
+		*ra = p;
+		strcpy(p, *a);
+		p += strlen(*a) + 1;
+		++ra;
+		++a;
+	}
+	*ra = NULL;
+	return (char **) buf;
+}
+
+static void sched_add(struct proc *new) {
+	TAILQ_INSERT_TAIL(&squeue, new, lentry);
+}
+
+static void sched_remove(struct proc *p) {
+	TAILQ_REMOVE(&squeue, p, lentry);
+}
+
+static struct proc *sched_next(void) {
+	return TAILQ_FIRST(&squeue);
+}
+
+static void sched_sleep(void) {
+	sched_remove(curp);
+	curp->state = SLEEPING;
+}
+
+static void sched_wake(struct proc *p) {
+	assert(p != curp);
+	p->state = READY;
+	sched_add(p);
+}
+
+void sched(void) {
+	assert(curp->state != READY);
+	if (curp->state == RUNNING) {
+		curp->state = READY;
+		sched_add(curp);
+	}
+
+	struct proc *nextp = sched_next();
+	sched_remove(nextp);
+	nextp->state = RUNNING;
+	if (curp != nextp) {
+		struct proc *old = curp;
+		struct proc *new = nextp;
+		curp = nextp;
+		ctx_switch(&old->ctx, &new->ctx);
+	}
+}
+
+int sched_init(void) {
+	struct proc *newp = pool_alloc(&procpool);
+	if (!newp) {
+		return -1;
+	}
+	newp->state = RUNNING;
+	curp = newp;
+	return 0;
+}
+
+int sys_run(char *argv[]) {
 	if (!argv[0]) {
 		return -1;
 	}
 
+	struct proc *newp = pool_alloc(&procpool);
+	if (!newp) {
+		goto failproc;
+	}
+	newp->parent = curp;
+	newp->state = READY;
+	newp->freemark = freemark();
+
 	void *entry;
-	void *mark = load(argv[0], &entry);
-	if (!mark) {
+	if (load(argv[0], &entry, newp)) {
+		goto failload;
+	}
+
+	newp->stacksz = 0x2000;
+	newp->stack = alloc(newp->stacksz);
+	if (!newp->stack) {
+		goto failstack;
+	}
+
+	int nargv;
+	int asize = argv_size(argv, &nargv);
+	newp->argvb = alloc(align(asize, 0xfff));
+	newp->argv = argv_copy(newp->argvb, asize, argv, nargv);
+	newp->nargv = nargv;
+
+	ctx_make(&newp->ctx, entry, newp->stack, newp->stacksz);
+	sched_add(newp);
+	return newp - procspace;
+
+failstack:
+	freeup(newp->freemark);
+failload:
+	pool_free(&procpool, newp);
+failproc:
+	return -1;
+}
+
+int sys_getargv(char *buf, int bufsz, char **argv, int argvsz) {
+	int argc = 0;
+	char *bufp = buf;
+
+	for (char **arg = current_process()->argv; *arg; ++arg) {
+		if (argvsz < argc) {
+			return -1;
+		}
+
+		int len = strlen(*arg);
+		if (buf + bufsz - bufp < len) {
+			return -1;
+		}
+
+		strcpy(bufp, *arg);
+		argv[argc++] = bufp;
+		bufp += len + 1;
+	}
+	if (argvsz <= argc) {
 		return -1;
 	}
-	struct context_call_save save;
+	argv[argc] = NULL;
+	return argc;
+}
 
-	ctx_call_setup(ctx, tramprun, &save);
-	ctx_push(ctx, (unsigned long) mark);
-	ctx_push(ctx, (unsigned long) entry);
-	ctx_push(ctx, (unsigned long) argv);
-	ctx_push(ctx, (unsigned long) code);
-	ctx_call_end(ctx, &save);
+int sys_exit(int code) {
+	if (!curp->parent) {
+		// init exits
+		hal_halt();
+	}
 
+	curp->state = EXITED;
+	curp->code = code;
+	sched_wake(curp->parent);
+	sched_remove(curp);
+	sched();
 	return 0;
 }
 
-int sys_read(struct context *ctx, int f, void *buf, size_t sz) {
+int sys_wait(int id) {
+	if (id < 0 || ARRAY_SIZE(procspace) <= id) {
+		return -1;
+	}
+
+	struct proc *child = &procspace[id];
+	while (child->state != EXITED) {
+		sched_sleep();
+		sched();
+	}
+	int code = child->code;
+	freeup(child->freemark);
+	pool_free(&procpool, child);
+	return code;
+}
+
+int sys_read(int f, void *buf, size_t sz) {
 	return dbg_in(buf, sz);
 }
 
-int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
+int sys_write(int f, const void *buf, size_t sz) {
 	dbg_out(buf, sz);
 	return 0;
 }
 
+int sys_sleep(int msec) {
+	// IMPL ME
+	return -1;
+}
+
+int sys_uptime(void) {
+	// IMPL ME
+	return -1;
+}

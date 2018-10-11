@@ -1,5 +1,6 @@
 
 #include <stddef.h>
+#include <stdbool.h>
 
 #include "init.h"
 #include "hal/dbg.h"
@@ -14,14 +15,17 @@ void kernel_init(void *rootfs_cpio, void *mem, size_t sz, const char* args) {
 }
 
 void kernel_start(void) {
+
 	char *argv[] = { "shell", NULL };
-	void *entry;
-	void *mark = load(argv[0], &entry);
-	if (mark) {
-		((int (*)(int, char **))entry)(1, argv);
-		unload(mark);
+	if (sys_run(argv) < 0) {
+		panic("first process failed");
 	}
 
-	hal_halt();
-	while (1);
+	if (sched_init()) {
+		panic("sched_init failed");
+	}
+
+	while (true) {
+		sched();
+	}
 }
