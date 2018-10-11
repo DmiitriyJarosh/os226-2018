@@ -21,6 +21,9 @@ int main(int argc, char *argv[]) {
 		const char *comsep = "\n;";
 		char *stcmd;
 		char *cmd = strtok_r(buffer, comsep, &stcmd);
+		if (strcmp(cmd, "exit") == 0) {
+			return 0;
+		}
 		while (cmd) {
 			const char *argsep = " ";
 			char *starg;

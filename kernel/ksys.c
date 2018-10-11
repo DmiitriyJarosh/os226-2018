@@ -11,6 +11,7 @@
 #include "hal_context.h"
 #include "hal/dbg.h"
 
+#include "exn.h"
 #include "ksys.h"
 #include "proc.h"
 
@@ -387,11 +388,14 @@ int sys_write(int f, const void *buf, size_t sz) {
 }
 
 int sys_sleep(int msec) {
-	// IMPL ME
-	return -1;
+	int i = setProgTimer(msec / 1000);
+	if (-1 == i) {
+		return -1;
+	}
+	while (getProgTimer(i) != 0) {}
+	return 0;
 }
 
 int sys_uptime(void) {
-	// IMPL ME
-	return -1;
+	return getTime();
 }

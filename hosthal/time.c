@@ -9,13 +9,15 @@
 #include "hosttime.h"
 
 static bool timer_hnd(int exn, struct context *c, void *arg) {
-	// IMPL ME
+	progtimeup();
+	upTime();
 	return true;
 }
 
 int time_init(void) {
 	int res;
-
+	initTime(0);
+	initProgTimers();
 	if ((res = exn_set_hnd(SIGALRM, timer_hnd, NULL))) {
 		return res;
 	}

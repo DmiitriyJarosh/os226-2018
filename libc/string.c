@@ -100,6 +100,41 @@ int memcmp(const void *s1, const void *s2, size_t n) {
 }
 
 long int strtol(const char *nptr, char **endptr, int base) {
-	// IMPL ME
-	return 0;
+	long res = 0L;
+	long fixedres = 0;
+	int mflag = 0;
+	while (1) {
+        if (*nptr == ' ') {
+            nptr++;
+            continue;
+		}
+		if (*nptr == '-' && mflag == 0) {
+			mflag = 1;
+			nptr++;
+			continue;
+		}
+		if (*nptr < '0' || *nptr > ('0' + base - 1)) {
+			break;
+		}
+		res *= 10;
+		res += *nptr - '0';
+		if (res & 0x80000000) {
+			fixedres = 1;
+		}
+		nptr++;
+	}
+	if (endptr != NULL)
+	{
+		*endptr = (char*)nptr;
+	}
+	if (fixedres)
+	{
+		if (mflag) return -2147483648L;
+		return 2147483647L;
+	}
+	if (mflag == 1)
+	{
+		res *= -1;
+	}
+	return res;
 }
