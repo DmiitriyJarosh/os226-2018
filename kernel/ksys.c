@@ -230,12 +230,16 @@ static char **argv_copy(char *buf, size_t bufsz, char *argv[], int nargv) {
 	return (char **) buf;
 }
 
+
+static int counterQueue = 0;
 static void sched_add(struct proc *new) {
 	TAILQ_INSERT_TAIL(&squeue, new, lentry);
+	counterQueue++;
 }
 
 static void sched_remove(struct proc *p) {
 	TAILQ_REMOVE(&squeue, p, lentry);
+	counterQueue--;
 }
 
 static struct proc *sched_next(void) {
@@ -252,14 +256,22 @@ static void sched_wake(struct proc *p) {
 	p->state = READY;
 	sched_add(p);
 }
+static bool flag = false;
 
 void sched(void) {
+	if (counterQueue == 1 && flag == true) {	
+		setTime(2);
+		return;
+	}
+	flag = true;
 	assert(curp->state != READY);
+	//dbg_out("!", 1);
+	
 	if (curp->state == RUNNING) {
 		curp->state = READY;
 		sched_add(curp);
 	}
-
+	
 	struct proc *nextp = sched_next();
 	sched_remove(nextp);
 	nextp->state = RUNNING;
@@ -267,6 +279,8 @@ void sched(void) {
 		struct proc *old = curp;
 		struct proc *new = nextp;
 		curp = nextp;
+		//dbg_out("@",1);
+		setTime(2);
 		ctx_switch(&old->ctx, &new->ctx);
 	}
 }
@@ -312,7 +326,9 @@ int sys_run(char *argv[]) {
 	newp->nargv = nargv;
 
 	ctx_make(&newp->ctx, entry, newp->stack, newp->stacksz);
+	newp->state = READY;
 	sched_add(newp);
+	
 	return newp - procspace;
 
 failstack:
@@ -349,6 +365,7 @@ int sys_getargv(char *buf, int bufsz, char **argv, int argvsz) {
 }
 
 int sys_exit(int code) {
+	//dbg_out("$$", 2);
 	if (!curp->parent) {
 		// init exits
 		hal_halt();
@@ -358,6 +375,7 @@ int sys_exit(int code) {
 	curp->code = code;
 	sched_wake(curp->parent);
 	sched_remove(curp);
+	//kprint("%d", curp->nargv);
 	sched();
 	return 0;
 }
@@ -381,6 +399,7 @@ int sys_wait(int id) {
 int sys_read(int f, void *buf, size_t sz) {
 	return dbg_in(buf, sz);
 }
+
 
 int sys_write(int f, const void *buf, size_t sz) {
 	dbg_out(buf, sz);

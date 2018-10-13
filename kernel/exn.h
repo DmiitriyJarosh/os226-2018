@@ -25,3 +25,7 @@ int getProgTimer(int i);
 int* getProgTimers();
 
 void progtimeup();
+
+void checkTime();
+
+void setTime(int t);

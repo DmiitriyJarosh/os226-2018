@@ -20,7 +20,6 @@ void kernel_start(void) {
 	if (sys_run(argv) < 0) {
 		panic("first process failed");
 	}
-
 	if (sched_init()) {
 		panic("sched_init failed");
 	}

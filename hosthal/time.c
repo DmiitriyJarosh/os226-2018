@@ -11,6 +11,7 @@
 static bool timer_hnd(int exn, struct context *c, void *arg) {
 	progtimeup();
 	upTime();
+	checkTime();
 	return true;
 }
 
