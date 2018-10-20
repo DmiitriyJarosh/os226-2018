@@ -12,6 +12,7 @@
 #include "hal/dbg.h"
 
 #include "exn.h"
+#include "hal/exn.h"
 #include "ksys.h"
 #include "proc.h"
 
@@ -234,12 +235,16 @@ static char **argv_copy(char *buf, size_t bufsz, char *argv[], int nargv) {
 static int counterQueue = 0;
 static void sched_add(struct proc *new) {
 	TAILQ_INSERT_TAIL(&squeue, new, lentry);
-	counterQueue++;
+	//if (new->argv != 0) {
+		counterQueue++;
+	//}
 }
 
 static void sched_remove(struct proc *p) {
 	TAILQ_REMOVE(&squeue, p, lentry);
-	counterQueue--;
+	//if (p->argv != 0) {
+		counterQueue--;
+	//}
 }
 
 static struct proc *sched_next(void) {
@@ -247,41 +252,58 @@ static struct proc *sched_next(void) {
 }
 
 static void sched_sleep(void) {
+	bool irq = irq_save();	
 	sched_remove(curp);
+	irq_restore(irq);
 	curp->state = SLEEPING;
 }
 
 static void sched_wake(struct proc *p) {
 	assert(p != curp);
 	p->state = READY;
+	bool irq = irq_save();
 	sched_add(p);
+	irq_restore(irq);
 }
 static bool flag = false;
 
+static bool flag5 = false;
 void sched(void) {
+	if (flag5) {		
+		return;
+	}
+	flag5 = true;
 	if (counterQueue == 1 && flag == true) {	
 		setTime(2);
+		flag5 = false;
 		return;
 	}
 	flag = true;
 	assert(curp->state != READY);
-	//dbg_out("!", 1);
+	dbg_out("!", 1);
 	
 	if (curp->state == RUNNING) {
 		curp->state = READY;
+		bool irq = irq_save();
 		sched_add(curp);
+		irq_restore(irq);
 	}
 	
 	struct proc *nextp = sched_next();
+	bool irq1 = irq_save();
 	sched_remove(nextp);
+	irq_restore(irq1);
 	nextp->state = RUNNING;
+	flag5 = false;
 	if (curp != nextp) {
 		struct proc *old = curp;
 		struct proc *new = nextp;
 		curp = nextp;
-		//dbg_out("@",1);
-		setTime(2);
+		
+		setTime(2);	
 		ctx_switch(&old->ctx, &new->ctx);
+	dbg_out("@",1);
+		
 	}
 }
 
@@ -327,7 +349,9 @@ int sys_run(char *argv[]) {
 
 	ctx_make(&newp->ctx, entry, newp->stack, newp->stacksz);
 	newp->state = READY;
+	bool irq = irq_save();
 	sched_add(newp);
+	irq_restore(irq);
 	
 	return newp - procspace;
 
@@ -365,17 +389,19 @@ int sys_getargv(char *buf, int bufsz, char **argv, int argvsz) {
 }
 
 int sys_exit(int code) {
-	//dbg_out("$$", 2);
+	dbg_out("$$", 2);
 	if (!curp->parent) {
 		// init exits
+		sched();				
 		hal_halt();
 	}
-
 	curp->state = EXITED;
 	curp->code = code;
 	sched_wake(curp->parent);
+	bool irq = irq_save();
 	sched_remove(curp);
-	//kprint("%d", curp->nargv);
+	irq_restore(irq);
+	kprint("%d", curp->nargv);
 	sched();
 	return 0;
 }

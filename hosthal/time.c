@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <assert.h>
+#include "hal/dbg.h"
 
 #include "exn.h"
 #include "hosttime.h"
@@ -11,6 +12,7 @@
 static bool timer_hnd(int exn, struct context *c, void *arg) {
 	progtimeup();
 	upTime();
+	//dbg_out("^", 1);
 	checkTime();
 	return true;
 }

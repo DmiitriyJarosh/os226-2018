@@ -25,6 +25,6 @@ void kernel_start(void) {
 	}
 
 	while (true) {
-		sched();
+		sched();	
 	}
 }

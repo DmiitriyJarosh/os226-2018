@@ -1,6 +1,7 @@
 
 #include "util.h"
 #include "exn.h"
+#include "hal/exn.h"
 #include "ksys.h"
 
 #define EXN_N_MAX 64
@@ -57,10 +58,13 @@ int setProgTimer(int time) {
 	return -1;
 }
 void progtimeup() {
-	for (int i = 0; i < NUM_OF_PROGTIMERS + 1; i++) {
+	for (int i = 0; i < NUM_OF_PROGTIMERS; i++) {
 		if (progtimers[i] != -1) {
 			progtimers[i]--;
 		}
+	}
+	if (progtimers[NUM_OF_PROGTIMERS] > 0) {
+		progtimers[NUM_OF_PROGTIMERS]--;
 	}
 }
 void initTime(long long inittime) {

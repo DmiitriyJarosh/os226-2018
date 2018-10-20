@@ -29,3 +29,4 @@ void progtimeup();
 void checkTime();
 
 void setTime(int t);
+
