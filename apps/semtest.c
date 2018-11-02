@@ -18,11 +18,13 @@ int main(int argc, char *argv[]) {
 
 	while (true) {
 		os_sem_down(0);
+		os_mutex(true);
 		rprintf("in  %d\n", id);
 		os_sleep(0);
 		os_sleep(0);
 		os_sleep(0);
 		rprintf("out %d\n", id);
+		os_mutex(false);
 		os_sem_up(0);
 	}
 

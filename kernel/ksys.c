@@ -406,6 +406,66 @@ int sys_sem_down(int id) {
 	return -1;
 }
 
+static int queue[20];
+static int queuecnt = 0;
+static bool mutexflag = false;
+
+long pop() {
+	int tmp = queue[0];
+	for (int i = 0; i < queuecnt - 1; i++) {
+		queue[i] = queue[i + 1];
+	}
+	queuecnt--;
+	return tmp;	
+}
+
+long gethead() {
+	return queue[0];
+}
+
+void inserttail(int value) {
+	queue[queuecnt] = value;
+	queuecnt++;
+}
+
+void lock() {
+	bool irq = irq_save();
+	if (!mutexflag) {
+		mutexflag = true;
+		goto out;
+	} else {
+		inserttail((long)curp);
+		while (1) {
+			irq_restore(irq);
+			sched(true);
+			irq = irq_save();
+			if (gethead() == (long)curp && mutexflag == false) {
+				pop();
+				mutexflag = true;
+				goto out;			
+			}	
+		}
+	}
+
+	out:
+		irq_restore(irq);	
+}
+
+void unlock() {
+	bool irq = irq_save();
+	mutexflag = false;
+	//wake next
+	irq_restore(irq);	
+}
+
+void sys_mutex(int flag) {
+	if (flag) {
+		lock();
+	} else {
+		unlock();
+	}
+}
+
 int sys_sleep(int msec) {
 	if (msec == 0) {
 		sched(true);
