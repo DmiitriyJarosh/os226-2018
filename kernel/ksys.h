@@ -7,7 +7,7 @@
 struct context;
 
 #define DO_DECLARE(ret, name, ...) \
-	extern ret sys_ ## name(__VA_ARGS__)
+	extern ret sys_ ## name(struct context *ctx, ## __VA_ARGS__ )
 #define DECLARE0(ret, name) \
 	DO_DECLARE(ret, name);
 #define DECLARE1(ret, name, type1, name1) \
@@ -36,6 +36,6 @@ extern int rootfs_cpio_init(void *p);
 
 extern int sched_init(void);
 
-extern void sched(bool voluntary);
+extern void sched(struct context *ctx, bool voluntary);
 
-extern void sched_handle_posted(void);
+extern void sched_handle_posted(struct context *ctx);

@@ -14,8 +14,11 @@
 #include "hal/dbg.h"
 #include "hal/exn.h"
 
+#include "exn.h"
 #include "ksys.h"
 #include "proc.h"
+
+struct exn_ctx;
 
 struct cpio_old_hdr {
 	unsigned short   c_magic;
@@ -232,6 +235,22 @@ static struct proc *sched_next(void) {
 	return TAILQ_FIRST(&squeue);
 }
 
+static void copy_mem(struct proc *old, struct proc *new) {
+	void *tmp_stack = palloc(old->stackn);
+	void *tmp_load = palloc(old->loadn);
+
+	memcpy(tmp_stack, old->stack, old->stackn * PSIZE);
+	memcpy(tmp_load, old->load, old->loadn * PSIZE);
+
+	memcpy(old->stack, new->stack, old->stackn * PSIZE);
+	memcpy(old->load, new->load, old->loadn * PSIZE);
+	
+	memcpy(new->stack, tmp_stack, old->stackn * PSIZE);
+	memcpy(new->load, tmp_load, old->loadn * PSIZE);
+	
+	
+}
+
 static void sched_wake(struct proc *p) {
 	bool irq = irq_save();
 	if (!p->inqueue) {
@@ -243,7 +262,7 @@ static void sched_wake(struct proc *p) {
 	irq_restore(irq);
 }
 
-void sched(bool voluntary) {
+void sched(struct context *ctx, bool voluntary) {
 	bool irq = irq_save();
 
 	assert(!curp->inqueue);
@@ -274,21 +293,37 @@ void sched(bool voluntary) {
 		struct proc *old = curp;
 		struct proc *new = nextp;
 		curp = nextp;
-		ctx_switch(&old->ctx, &new->ctx);
+		if (new->forkParent != NULL) {
+			//mmu here	
+			if (ctx != NULL) {
+				dbg_out("ctx\n",4);
+			}	
+			copy_mem(new->forkParent, new);
+			dbg_out("\n!\n", 3);
+			new->ctx.r12 = (unsigned long)ctx;
+			//new->ctx.r12 = 1;
+			ctx_switchARG(&old->ctx, &new->ctx);
+		} else {
+			ctx_switch(&old->ctx, &new->ctx);
+		}		
 	}
 
 	irq_restore(irq);
+	//dbg_out("shed_end\n", 9);
 }
+
+
+
 
 
 static void preempt_sched(void *arg) {
 	sched_posted = true;
 }
 
-void sched_handle_posted(void) {
+void sched_handle_posted(struct context *ctx) {
 	if (sched_posted) {
 		sched_posted = false;
-		sched(false);
+		sched(ctx, false);    //!!!
 	}
 }
 
@@ -299,6 +334,7 @@ int sched_init(void) {
 	}
 	newp->inqueue = false;
 	newp->sleep = false;
+	newp->forkParent = NULL;
 	curp = newp;
 
 	sched_posted = false;
@@ -313,7 +349,7 @@ void proctramp(void) {
 	curp->entry();
 }
 
-int sys_run(char *argv[]) {
+int sys_run(struct context *ctx, char *argv[]) {
 	if (!argv[0]) {
 		return -1;
 	}
@@ -326,6 +362,7 @@ int sys_run(char *argv[]) {
 	newp->inqueue = false;
 	newp->sleep = false;
 	newp->exited = false;
+	newp->forkParent = NULL;
 
 	void *entry;
 	if (load(argv[0], &entry, newp)) {
@@ -361,7 +398,7 @@ failproc:
 	return -1;
 }
 
-int sys_getargv(char *buf, int bufsz, char **argv, int argvsz) {
+int sys_getargv(struct context *ctx, char *buf, int bufsz, char **argv, int argvsz) {
 	int argc = 0;
 	char *bufp = buf;
 
@@ -386,23 +423,23 @@ int sys_getargv(char *buf, int bufsz, char **argv, int argvsz) {
 	return argc;
 }
 
-int sys_exit(int code) {
+int sys_exit(struct context *ctx, int code) {
 	if (!curp->parent) {
 		// init exits
 		hal_halt();
 	}
-
+	dbg_out("@",1);
 	curp->code = code;
 	curp->exited = true;
 	sched_wake(curp->parent);
 	while (true) {
 		curp->sleep = true;
-		sched(true);
+		sched(ctx, true);
 	}
 	return 0;
 }
 
-int sys_wait(int id) {
+int sys_wait(struct context *ctx, int id) {
 	if (id < 0 || ARRAY_SIZE(procspace) <= id) {
 		return -1;
 	}
@@ -410,30 +447,30 @@ int sys_wait(int id) {
 	struct proc *child = &procspace[id];
 	curp->sleep = true;
 	while (!child->exited) {
-		sched(true);
+		sched(ctx, true);
 		curp->sleep = true;
 	}
 	curp->sleep = false;
 
 	assert(!child->inqueue && child->sleep);
 	int code = child->code;
-	pfree(child->argvb, child->argvbn);
-	pfree(child->stack, child->stackn);
-	unload(child);
-	pool_free(&procpool, child);
+	//pfree(child->argvb, child->argvbn);
+	//pfree(child->stack, child->stackn);
+	//unload(child);
+	//pool_free(&procpool, child);
 	return code;
 }
 
-int sys_read(int f, void *buf, size_t sz) {
+int sys_read(struct context *ctx, int f, void *buf, size_t sz) {
 	return dbg_in(buf, sz);
 }
 
-int sys_write(int f, const void *buf, size_t sz) {
+int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
 	dbg_out(buf, sz);
 	return 0;
 }
 
-int sys_sem_alloc(int cnt) {
+int sys_sem_alloc(struct context *ctx, int cnt) {
 	bool irq = irq_save();
 	struct sem *s = pool_alloc(&sempool);
 	irq_restore(irq);
@@ -445,7 +482,7 @@ int sys_sem_alloc(int cnt) {
 	return s - sems;
 }
 
-int sys_sem_up(int id) {
+int sys_sem_up(struct context *ctx, int id) {
 	bool irq = irq_save();
 	++sems[id].cnt;
 	// TODO ping waiters
@@ -453,7 +490,7 @@ int sys_sem_up(int id) {
 	return -1;
 }
 
-int sys_sem_down(int id) {
+int sys_sem_down(struct context *ctx, int id) {
 	struct sem *s = &sems[id];
 	bool irq = irq_save();
 	if (s->cnt) {
@@ -464,7 +501,7 @@ int sys_sem_down(int id) {
 	while (1) {
 		irq_restore(irq);
 		// TODO sleep
-		sched(true);
+		sched(ctx, true);
 		irq = irq_save();
 		if (s->cnt) {
 			--s->cnt;
@@ -476,9 +513,116 @@ out:
 	return 0;
 }
 
-int sys_sleep(int msec) {
+/*
+static void rip_swap (unsigned long rip, context* _ctx) {
+	struct exn_ctx *ctx = (struct exn_ctx *) _ctx;
+	ctx->rip = rip;
+} 
+*/
+/*static void empty(unsigned long rip, unsigned long ctx) {
+	if (ctx != 0) {
+		dbg_out("rip changing\n", 13);
+	} else {
+		dbg_out("ctx is NULL\n", 12);
+	}
+	((struct exn_ctx*)ctx)->rip = rip;
+}*/
+
+void push(unsigned long* sp, unsigned long value, unsigned long stack) {
+	*((unsigned long*)stack) = value;
+	*(sp) -= sizeof(unsigned long);
+}
+
+int sys_fork(struct context *ctx) {
+	struct proc *newp = pool_alloc(&procpool);
+	if (!newp) {
+		goto failproc;
+	}
+	
+	dbg_out("inFORK\n", 7);
+	newp->parent = curp;
+	newp->inqueue = false;
+	newp->sleep = false;
+	newp->exited = false;
+	char **argv = (char **) curp->argv;
+	
+	argv[0][1] = '!';
+	
+	
+	
+	newp->loadn = curp->loadn;
+	newp->load = palloc(newp->loadn);
+	memset(newp->load, 0, PSIZE * newp->loadn);
+	memcpy(newp->load, &curp->load, PSIZE * curp->loadn);
+	void *entry = curp->entry - (unsigned long)(curp->load) + (unsigned long)newp->load;
+	
+	newp->forkParent = curp;	
+
+	newp->stackn = curp->stackn;
+	newp->stack = palloc(newp->stackn);
+	memcpy(newp->stack, &curp->stack, PSIZE * newp->stackn);
+	if (!newp->stack) {
+		goto failstack;
+	}
+
+
+	int nargv;
+	int asize = argv_size(argv, &nargv);
+	newp->argvbn = psize(asize);
+	newp->argvb = palloc(newp->argvbn);
+	newp->argv = argv_copy(newp->argvb, asize, argv, nargv);
+	newp->argv[0][1] = '@';
+	newp->nargv = nargv;
+	newp->entry = entry;
+
+
+	dbg_out("before_copy\n", 12);
+	ctx_copy((struct context*)&newp->full_ctx, ctx);
+	newp->ctx.rsp = newp->full_ctx.sp;
+	
+	//we can put this to %rdi and %rsi in ctx_switchARG and it means we have arg for function empty
+	newp->ctx.rip = newp->full_ctx.rip;
+	
+	////set first arg of rip_swap to %rdi
+	//newp->full_ctx->rdi = newp->full_ctx->rip;
+
+	////push &rip_swap
+	//*(newp->full_ctx->sp + newp->stack - curp->stack) = &rip_swap;
+	//newp->full_ctx->sp += sizeof(&rip_swap); //really plus? or maybe stack should get us minus?
+	////end of push
+
+	push(&(newp->ctx.rsp), newp->full_ctx.rip, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.sp, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.r15, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.r14, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.r13, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.r12, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.r11, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.r10, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.r9, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.r8, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.rdi, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.rsi, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.rdx, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.rcx, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.rbx, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.rax, newp->ctx.rsp + newp->stack - curp->stack);
+	
+        dbg_out("after_copy\n", 11);
+
+	bool irq = irq_save();
+	sched_add(newp);
+	irq_restore(irq);
+	return 1;
+failstack:
+	unload(newp);
+failproc:
+	return -1;
+}
+
+int sys_sleep(struct context *ctx, int msec) {
 	if (msec == 0) {
-		sched(true);
+		sched(ctx, true);
 		return 0;
 	}
 
@@ -489,6 +633,6 @@ int sys_sleep(int msec) {
 	return 0;
 }
 
-int sys_uptime(void) {
+int sys_uptime(struct context *ctx) {
 	return time_current();
 }
