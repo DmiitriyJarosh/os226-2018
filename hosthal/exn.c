@@ -60,6 +60,7 @@ static void hctx_push(greg_t *regs, unsigned long val) {
 
 static void exntramp(struct exn_ctx *ctx) {
 	exn_do(ctx->exn, (struct context *) ctx);
+	
 }
 
 static bool syscall_hnd(int exn, struct context *_ctx, void *arg) {

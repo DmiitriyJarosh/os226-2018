@@ -38,7 +38,7 @@ void ctx_copy(struct context *old_ctx, struct context *_ctx) {
 	new_ctx->rsi = cur_ctx->rsi;
 	new_ctx->rdx = cur_ctx->rdx;
 	new_ctx->rcx = cur_ctx->rcx;
-	new_ctx->rax = 0;
+	new_ctx->rax = 0;//cur_ctx->rax;
 	new_ctx->rflags = cur_ctx->rflags;
 	new_ctx->target = cur_ctx->target;
 	new_ctx->exn = cur_ctx->exn;

@@ -579,6 +579,7 @@ int sys_fork(struct context *ctx) {
 	dbg_out("before_copy\n", 12);
 	ctx_copy((struct context*)&newp->full_ctx, ctx);
 	newp->ctx.rsp = newp->full_ctx.sp;
+
 	
 	//we can put this to %rdi and %rsi in ctx_switchARG and it means we have arg for function empty
 	newp->ctx.rip = newp->full_ctx.rip;
@@ -591,8 +592,10 @@ int sys_fork(struct context *ctx) {
 	//newp->full_ctx->sp += sizeof(&rip_swap); //really plus? or maybe stack should get us minus?
 	////end of push
 
+	
 	push(&(newp->ctx.rsp), newp->full_ctx.rip, newp->ctx.rsp + newp->stack - curp->stack);
 	push(&(newp->ctx.rsp), newp->full_ctx.sp, newp->ctx.rsp + newp->stack - curp->stack);
+	push(&(newp->ctx.rsp), newp->full_ctx.rflags, newp->ctx.rsp + newp->stack - curp->stack);
 	push(&(newp->ctx.rsp), newp->full_ctx.r15, newp->ctx.rsp + newp->stack - curp->stack);
 	push(&(newp->ctx.rsp), newp->full_ctx.r14, newp->ctx.rsp + newp->stack - curp->stack);
 	push(&(newp->ctx.rsp), newp->full_ctx.r13, newp->ctx.rsp + newp->stack - curp->stack);
@@ -607,6 +610,7 @@ int sys_fork(struct context *ctx) {
 	push(&(newp->ctx.rsp), newp->full_ctx.rcx, newp->ctx.rsp + newp->stack - curp->stack);
 	push(&(newp->ctx.rsp), newp->full_ctx.rbx, newp->ctx.rsp + newp->stack - curp->stack);
 	push(&(newp->ctx.rsp), newp->full_ctx.rax, newp->ctx.rsp + newp->stack - curp->stack);
+	newp->ctx.rsp += (sizeof(unsigned long));
 	
         dbg_out("after_copy\n", 11);
 

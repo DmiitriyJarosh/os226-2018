@@ -34,7 +34,8 @@ ctx_switchARG:
 	pop %r13
 	pop %r14
 	pop %r15
+	popfq
 
 	
-	mov 1*8(%rsp), %rsp
-	jmp *(%rsp)
+	mov 0*8(%rsp), %rsp
+	jmp *-(8)(%rsp)
