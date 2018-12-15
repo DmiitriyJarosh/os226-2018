@@ -3,6 +3,7 @@
 int main(int argc, char *argv[]) {
 	rprintf("start\n");
 	os_fork();
+	//rprintf("%d\n", k);
 	for (int i = 0; i < 2; ++i) {
 		rprintf("%d\n", i);
 	}

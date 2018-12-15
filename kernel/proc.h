@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include "hal_context.h"
 #include "third-party/queue.h"
+#include "exn.h"
 
 struct proc {
 	TAILQ_ENTRY(proc) lentry;
@@ -14,6 +15,12 @@ struct proc {
 	bool sleep;
 	bool inqueue;
 	bool exited;
+
+	bool first_run_fork;
+
+	struct proc *forkParent;
+
+	struct exn_ctx full_ctx;
 
 	void *load;
 	int loadn;

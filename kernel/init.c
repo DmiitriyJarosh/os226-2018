@@ -27,7 +27,7 @@ void kernel_start(void) {
 	}
 
 	char *argv[] = { "shell", NULL };
-	if (sys_run(argv) < 0) {
+	if (sys_run(NULL, argv) < 0) {
 		panic("first process failed");
 	}
 
@@ -36,6 +36,7 @@ void kernel_start(void) {
 	}
 
 	while (true) {
-		sched(true);
+		//sched(NULL, true);
+		//dbg_out("kernel\n", 7);
 	}
 }

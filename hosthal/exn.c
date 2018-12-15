@@ -41,27 +41,6 @@ struct kmmap {
 	int n;
 };
 
-struct exn_ctx {
-	unsigned long r15;
-	unsigned long r14;
-	unsigned long r13;
-	unsigned long r12;
-	unsigned long r11;
-	unsigned long r10;
-	unsigned long r9;
-	unsigned long r8;
-	unsigned long rdi;
-	unsigned long rsi;
-	unsigned long rdx;
-	unsigned long rcx;
-	unsigned long rbx;
-	unsigned long rax;
-	unsigned long rflags;
-	unsigned long target;
-	unsigned long sp;
-	unsigned long exn;
-	unsigned long rip;
-};
 
 extern void tramptramp(void);
 
@@ -81,6 +60,7 @@ static void hctx_push(greg_t *regs, unsigned long val) {
 
 static void exntramp(struct exn_ctx *ctx) {
 	exn_do(ctx->exn, (struct context *) ctx);
+	
 }
 
 static bool syscall_hnd(int exn, struct context *_ctx, void *arg) {
@@ -91,7 +71,7 @@ static bool syscall_hnd(int exn, struct context *_ctx, void *arg) {
 	}
 
 	ctx->rip += 2;
-	ctx->rax = syscall_do(ctx->rax,
+	ctx->rax = syscall_do(_ctx, ctx->rax,
 			ctx->rbx, ctx->rcx,
 			ctx->rdx, ctx->rsi,
 			(void *) ctx->rdi);
@@ -142,6 +122,7 @@ static void TSECTION sighnd(int sig, siginfo_t *info, void *ctx) {
 	regs[REG_RSP] -= SYSV_REDST_SZ;
 	hctx_push(regs, regs[REG_RIP]);
 	hctx_push(regs, sig);
+	hctx_push(regs, regs[REG_RBP]);
 	hctx_push(regs, oldsp);
 	hctx_push(regs, (unsigned long) exntramp);
 	regs[REG_RIP] = (greg_t) tramptramp;
