@@ -18,6 +18,12 @@ struct proc {
 
 	bool first_run_fork;
 
+	struct proc *childs[20];
+	int nextChild;
+	int childNum;
+
+	bool canExit;
+
 	struct proc *forkParent;
 
 	struct exn_ctx full_ctx;

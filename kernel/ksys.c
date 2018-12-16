@@ -251,7 +251,7 @@ static void copy_mem(struct proc *old, struct proc *new) {
 	
 }
 
-static void sched_wake(struct proc *p) {
+/*static void sched_wake(struct proc *p) {
 	bool irq = irq_save();
 	if (!p->inqueue) {
 		sched_add(p);
@@ -260,7 +260,7 @@ static void sched_wake(struct proc *p) {
 		p->sleep = false;
 	}
 	irq_restore(irq);
-}
+}*/
 
 void sched(struct context *ctx, bool voluntary) {
 	bool irq = irq_save();
@@ -272,6 +272,19 @@ void sched(struct context *ctx, bool voluntary) {
 	if (!curp->sleep || !voluntary) {
 		sched_add(curp);
 	}
+	bool flag = false;
+	for (int i = 0; i < 20; i++) {
+		
+		if (curp->childs[i] != NULL) {
+			flag = true;
+			break;				
+		}		
+	}
+	if (!flag) {
+		curp->canExit = true;
+	} else {
+		curp->canExit = false;
+	}	
 
 #if 0
 	kprint("P %d %p %d %p ", curp - procspace, curp->stack, curp->stackn, curp->ctx.rsp);
@@ -300,13 +313,9 @@ void sched(struct context *ctx, bool voluntary) {
 			copy_mem(new->forkParent, new);
 		}
 		if (new->first_run_fork) {
-			new->first_run_fork = false;	
-			if (ctx != NULL) {
-				dbg_out("ctx\n",4);
-			}	
-			
-			dbg_out("\n!\n", 3);
+			new->first_run_fork = false;		
 			new->ctx.r12 = (unsigned long)ctx;
+			irq_restore(true);
 			ctx_switchARG(&old->ctx, &new->ctx);
 		} else {
 			ctx_switch(&old->ctx, &new->ctx);
@@ -314,7 +323,6 @@ void sched(struct context *ctx, bool voluntary) {
 	}
 
 	irq_restore(irq);
-	//dbg_out("shed_end\n", 9);
 }
 
 
@@ -340,6 +348,7 @@ int sched_init(void) {
 	newp->inqueue = false;
 	newp->sleep = false;
 	newp->forkParent = NULL;
+	newp->canExit = true;
 	curp = newp;
 
 	sched_posted = false;
@@ -354,6 +363,8 @@ void proctramp(void) {
 	curp->entry();
 }
 
+static bool first_proc_flag = true;
+
 int sys_run(struct context *ctx, char *argv[]) {
 	if (!argv[0]) {
 		return -1;
@@ -364,11 +375,29 @@ int sys_run(struct context *ctx, char *argv[]) {
 		goto failproc;
 	}
 	newp->parent = curp;
+	
+	if (!first_proc_flag) {
+		if (curp->nextChild < 20) {
+			curp->childs[curp->nextChild] = newp;
+			newp->childNum = curp->nextChild;
+			curp->nextChild++;
+			curp->canExit = false;
+		} else {
+			goto failproc;	
+		}
+	} else {
+		first_proc_flag = false;		
+	}
+	newp->canExit = true;	
 	newp->first_run_fork = false;
 	newp->inqueue = false;
 	newp->sleep = false;
 	newp->exited = false;
 	newp->forkParent = NULL;
+	newp->nextChild = 0;
+	for (int i = 0; i < 20; i++) {
+		newp->childs[i] = NULL;
+	}
 
 	void *entry;
 	if (load(argv[0], &entry, newp)) {
@@ -434,11 +463,15 @@ int sys_exit(struct context *ctx, int code) {
 		// init exits
 		hal_halt();
 	}
-	dbg_out("@",1);
 	curp->code = code;
-	curp->exited = true;
-	sched_wake(curp->parent);
+	while (!curp->canExit) {
+		sched(ctx, true);
+	}
+	
+	curp->parent->childs[curp->childNum] = NULL;
+	//sched_wake(curp->parent);
 	while (true) {
+		curp->exited = true;
 		curp->sleep = true;
 		sched(ctx, true);
 	}
@@ -451,19 +484,19 @@ int sys_wait(struct context *ctx, int id) {
 	}
 
 	struct proc *child = &procspace[id];
-	curp->sleep = true;
+	//curp->sleep = true;
 	while (!child->exited) {
 		sched(ctx, true);
-		curp->sleep = true;
+		//curp->sleep = true;
 	}
-	curp->sleep = false;
+	//curp->sleep = false;
 
 	assert(!child->inqueue && child->sleep);
 	int code = child->code;
-	//pfree(child->argvb, child->argvbn);
-	//pfree(child->stack, child->stackn);
-	//unload(child);
-	//pool_free(&procpool, child);
+	pfree(child->argvb, child->argvbn);
+	pfree(child->stack, child->stackn);
+	unload(child);
+	pool_free(&procpool, child);
 	return code;
 }
 
@@ -519,20 +552,6 @@ out:
 	return 0;
 }
 
-/*
-static void rip_swap (unsigned long rip, context* _ctx) {
-	struct exn_ctx *ctx = (struct exn_ctx *) _ctx;
-	ctx->rip = rip;
-} 
-*/
-/*static void empty(unsigned long rip, unsigned long ctx) {
-	if (ctx != 0) {
-		dbg_out("rip changing\n", 13);
-	} else {
-		dbg_out("ctx is NULL\n", 12);
-	}
-	((struct exn_ctx*)ctx)->rip = rip;
-}*/
 
 void push(unsigned long* sp, unsigned long value, unsigned long stack) {
 	*((unsigned long*)stack) = value;
@@ -545,12 +564,29 @@ int sys_fork(struct context *ctx) {
 		goto failproc;
 	}
 	
-	dbg_out("inFORK\n", 7);
+	//dbg_out("inFORK\n", 7);
 	newp->parent = curp;
 	newp->inqueue = false;
 	newp->sleep = false;
 	newp->exited = false;
 	newp->first_run_fork = true;
+	newp->canExit = true;
+	
+
+	if (curp->nextChild < 20) {
+		curp->childs[curp->nextChild] = newp;
+		newp->childNum = curp->nextChild;
+		curp->nextChild++;
+		curp->canExit = false;
+	} else {
+		goto failproc;	
+	}
+	newp->nextChild = 0;
+	for (int i = 0; i < 20; i++) {
+		newp->childs[i] = NULL;
+	}
+	
+	
 	char **argv = (char **) curp->argv;
 	
 	argv[0][1] = '!';
@@ -583,7 +619,6 @@ int sys_fork(struct context *ctx) {
 	newp->entry = entry;
 
 
-	dbg_out("before_copy\n", 12);
 	ctx_copy((struct context*)&newp->full_ctx, ctx);
 	newp->ctx.rsp = newp->full_ctx.sp;
 
@@ -620,11 +655,11 @@ int sys_fork(struct context *ctx) {
 	push(&(newp->ctx.rsp), newp->full_ctx.rax, newp->ctx.rsp + newp->stack - curp->stack);
 	newp->ctx.rsp += (sizeof(unsigned long));
 	
-        dbg_out("after_copy\n", 11);
 
 	bool irq = irq_save();
 	sched_add(newp);
 	irq_restore(irq);
+	//dbg_out(finishingFORK, 13);
 	return 1;
 failstack:
 	unload(newp);

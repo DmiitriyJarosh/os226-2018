@@ -2,11 +2,11 @@
 #include <kernel/syscall.h>
 int main(int argc, char *argv[]) {
 	rprintf("start\n");
-	os_fork();
-	//rprintf("%d\n", k);
+	int tmp = os_fork();
+	rprintf("os_fork returned: %d\n", tmp);
 	for (int i = 0; i < 2; ++i) {
 		rprintf("%d\n", i);
 	}
-	rprintf("end");
+	rprintf("end\n");
 	return 0;
 }
